@@ -1,0 +1,112 @@
+# =============================================================================
+# TDK Data Pipeline – Docker Compose (with Oracle DB)
+# =============================================================================
+# Usage:
+#   1. docker-compose up --build
+#   2. Oracle DB will start automatically with credentials from .env
+# =============================================================================
+
+version: "3.9"
+
+services:
+  # --------------------------------------------------------------------------
+  # Oracle Database (XE – lightweight, free for dev/test)
+  # --------------------------------------------------------------------------
+  oracle-db:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: tdk-oracle-db
+    ports:
+      - "1521:1521"
+    environment:
+      - ORACLE_PASSWORD=${ORACLE_PASSWORD:-oracle123}
+      - APP_USER=${ORACLE_USER:-pipeline_user}
+      - APP_USER_PASSWORD=${ORACLE_PASSWORD:-oracle123}
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "healthcheck.sh" ]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 90s
+
+  # --------------------------------------------------------------------------
+  # Service 1: Data Ingestion  (DSV → Oracle DB)
+  # --------------------------------------------------------------------------
+  data-ingestion:
+    build:
+      context: .
+      dockerfile: data-ingestion/Dockerfile
+    container_name: tdk-data-ingestion
+    ports:
+      - "5001:5001"
+    env_file:
+      - .env
+    environment:
+      - INPUT_DIR=/app/data/input
+      - ORACLE_HOST=oracle-db
+    volumes:
+      - ./data/input:/app/data/input:ro
+    depends_on:
+      oracle-db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # Service 2: Data Export  (Oracle DB → TSV)
+  # --------------------------------------------------------------------------
+  data-export:
+    build:
+      context: .
+      dockerfile: data-export/Dockerfile
+    container_name: tdk-data-export
+    ports:
+      - "5002:5002"
+    env_file:
+      - .env
+    environment:
+      - OUTPUT_DIR=/app/data/output
+      - ORACLE_HOST=oracle-db
+    volumes:
+      - ./data/output:/app/data/output
+    depends_on:
+      oracle-db:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5002/health')" ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --------------------------------------------------------------------------
+  # Service 3: Scheduler / Orchestrator
+  # --------------------------------------------------------------------------
+  scheduler:
+    build:
+      context: .
+      dockerfile: scheduler/Dockerfile
+    container_name: tdk-scheduler
+    env_file:
+      - .env
+    environment:
+      - RUN_ON_STARTUP=true
+      - INGESTION_URL=http://data-ingestion:5001/ingest
+      - EXPORT_URL=http://data-export:5002/export
+    depends_on:
+      data-ingestion:
+        condition: service_healthy
+      data-export:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  oracle-data:
