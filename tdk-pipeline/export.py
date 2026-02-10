@@ -1,7 +1,6 @@
 """
 Data Export Service – Core Logic
 Queries Oracle DB and writes the result to a TSV file.
-Based on the provided "Reading Data from Oracle.py" script.
 """
 
 import os
