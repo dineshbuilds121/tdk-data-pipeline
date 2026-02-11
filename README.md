@@ -18,17 +18,52 @@ A robust, containerized ETL data pipeline designed to ingest raw DSV data into a
 The system consists of three Python microservices and one database container, all orchestrated via Docker Compose.
 
 ```mermaid
-graph LR
-    subgraph Docker Network
-        SCH[Scheduler Service] -->|Trigger POST /ingest| ING[Ingestion Service]
-        SCH -->|Trigger POST /export| EXP[Export Service]
-        
-        ING -->|Insert Data| DB[(Oracle XE 21c)]
-        EXP -->|Query Data| DB
+graph TB
+    subgraph "Client Layer"
+        CLIENT[HTTP Client]
+        CRON[Scheduled Jobs]
     end
     
-    FILE_IN[RAW DATA.dsv] -->|Mounted Volume| ING
-    EXP -->|Mounted Volume| FILE_OUT[output/*.tsv]
+    subgraph "Container Network"
+        subgraph "TDK Pipeline Service<br/>Port 5000"
+            FLASK[Flask REST API]
+            SCHED[APScheduler<br/>Orchestrator]
+            INGEST[Ingestion<br/>Engine]
+            EXPORT[Export<br/>Engine]
+        end
+        
+        subgraph "Data Layer"
+            ORACLEDB[(Oracle XE 21c<br/>Port 1521)]
+        end
+    end
+    
+    subgraph "File System"
+        INPUT["📁 data/input/<br/>RAW DATA.dsv"]
+        OUTPUT["📁 data/output/<br/>*.tsv Files"]
+    end
+    
+    CLIENT -->|POST /ingest| FLASK
+    CLIENT -->|POST /export| FLASK
+    CLIENT -->|GET /health| FLASK
+    
+    CRON -->|Trigger| SCHED
+    SCHED -->|Call Endpoints| FLASK
+    FLASK -->|Route| INGEST
+    FLASK -->|Route| EXPORT
+    
+    INGEST <-->|Parse & Load| INPUT
+    INGEST -->|INSERT / DELETE| ORACLEDB
+    
+    EXPORT -->|SELECT| ORACLEDB
+    EXPORT -->|Write TSV| OUTPUT
+    
+    style CLIENT fill:#e1f5fe
+    style CRON fill:#fff3e0
+    style FLASK fill:#c8e6c9
+    style INGEST fill:#f8bbd0
+    style EXPORT fill:#f8bbd0
+    style SCHED fill:#ffe0b2
+    style ORACLEDB fill:#ffccbc
 ```
 
 ### Components
